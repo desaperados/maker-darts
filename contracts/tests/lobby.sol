@@ -50,6 +50,10 @@ contract MakerDartsActor {
     game.setParticipantReward(participantReward);
   }
 
+  function doSetHouse(address addr, uint percent) {
+    game.setHouse(addr, percent);
+  }
+
   function doStartGame() {
     game.startGame(betHash);
   }
@@ -404,6 +408,83 @@ contract MakerLobbyTest is Test {
     assertEq(bob.balanceIn(betAsset), betSize + (betSize / 3));
     assertEq(barb.balanceIn(betAsset), betSize + (betSize / 3));
     assertEq(izzy.balanceIn(betAsset), betSize / 2);
+  }
+
+  function testFullGoldenPathZeroSumGameWithHouseEdge () logs_gas {
+    uint houseEdge = 1;
+    // Create & first commit
+    alice.setBetHash(sha3(aliceSalt, aliceTarget));
+
+    var game = alice.createZSGame(betSize, betAsset);
+    game.setBlockNumber(block.number);
+
+    alice.setGame(game);
+    albert.setGame(game);
+    bob.setGame(game);
+    barb.setGame(game);
+    izzy.setGame(game);
+
+    alice.doSetHouse(alice, houseEdge);
+
+    alice.doApprove(game, betSize, betAsset);
+    alice.doStartGame();
+
+    // Commit
+    albert.setBetHash(sha3(albertSalt, albertTarget));
+    albert.doApprove(game, betSize, betAsset);
+    albert.doJoinGame(albert);
+
+    bob.setBetHash(sha3(bobSalt, bobTarget));
+    bob.doApprove(game, betSize, betAsset);
+    bob.doJoinGame(bob);
+
+    barb.setBetHash(sha3(barbSalt, barbTarget));
+    barb.doApprove(game, betSize, betAsset);
+    barb.doJoinGame(barb);
+
+    izzy.setBetHash(sha3(izzySalt, izzyTarget));
+    izzy.doApprove(game, betSize, betAsset);
+    izzy.doJoinGame(izzy);
+
+    // Advance the game past the commitment round
+    game.setBlockNumber(block.number + game.commitmentBlocks());
+
+    // Reveal
+    alice.doRevealBet(aliceTarget, aliceSalt);
+    albert.doRevealBet(albertTarget, albertSalt);
+    bob.doRevealBet(bobTarget, bobSalt);
+    barb.doRevealBet(barbTarget, barbSalt);
+    izzy.doRevealBet(izzyTarget, izzySalt);
+
+    // Advance the game past the reveal round
+    game.setBlockNumber(block.number + game.commitmentBlocks() +
+                       game.revealBlocks());
+
+    // Calculate
+    alice.doCalculateResult();
+    albert.doCalculateResult();
+    bob.doCalculateResult();
+    barb.doCalculateResult();
+    izzy.doCalculateResult();
+
+    // Advance the game past the calculation round
+    game.setBlockNumber(block.number + game.commitmentBlocks() +
+                       game.revealBlocks() + game.calculationBlocks());
+
+    // Claim
+    alice.doClaim();
+    albert.doClaim();
+    bob.doClaim();
+    barb.doClaim();
+    izzy.doClaim();
+
+    // Check balances
+    assertEq(alice.balanceIn(betAsset),1330 + (houseEdge * betSize / 100)); // alice has the house edge
+    assertEq(betAsset.balanceOf(game.house()), 1340); // alice is the house
+    assertEq(albert.balanceIn(betAsset), 500);
+    assertEq(bob.balanceIn(betAsset), 1330);
+    assertEq(barb.balanceIn(betAsset), 1330);
+    assertEq(izzy.balanceIn(betAsset), 500);
   }
 
   function testFullZeroSumGameWithOneUnrevealingPlayer () logs_gas {

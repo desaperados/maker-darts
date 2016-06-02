@@ -20,6 +20,8 @@ contract Owned {
 contract MakerDartsGame is Owned {
   uint public betSize; // in the asset's smallest unit
   ERC20 public betAsset;
+  address public house; // contract address for receipt of house fees
+  uint public houseEdge; // percentage of winnings which will be retained by the house
   uint public participants; // game can't start until this many players commit
   uint public participantReward; // base reward for playing
   uint public commitmentBlocks; // number of blocks in commitment round
@@ -114,6 +116,11 @@ contract MakerDartsGame is Owned {
     betSize = _betSize;
     betAsset = _betAsset;
     debug = _debug;
+  }
+
+  function setHouse (address addr, uint percent) onlyOwner beforeGame {
+    house = addr;
+    houseEdge = percent;
   }
 
   function setParticipants (uint numParticipants) onlyOwner beforeGame {
@@ -220,20 +227,40 @@ contract MakerDartsGame is Owned {
     if (bets[commitHash].result == 0x0 || bets[commitHash].claimed) {
       throw;
     }
-    var winnerPayout = (betSize * winnerCut) / 100;
-    var totalPayout = (betSize - winnerPayout) + participantReward;
 
-    bool winner = false;
+    var winnerPayout = (betSize * winnerCut) / 100;
+    var totalWinnings = winnerPayout * (betKeys.length - winnerKeys.length);
+    var payout = (betSize - winnerPayout) + participantReward;
+
+    // In games where a house edge has been set a house fee will be deducted
+    // from winnings
+    if (houseEdge > 0) {
+      var houseFee = (totalWinnings * houseEdge) / 100;
+      totalWinnings = totalWinnings - houseFee;
+    }
+
+    uint housePayout = 0;
     for (uint i = 0; i < winnerKeys.length; i += 1) {
       if (winnerKeys[i] == commitHash) {
-        totalPayout = betSize +
-          (winnerPayout * (betKeys.length - winnerKeys.length)
-           / winnerKeys.length) + participantReward;
+        payout = betSize + (totalWinnings / winnerKeys.length) + participantReward;
+        housePayout = houseFee / winnerKeys.length;
         break;
       }
     }
-    betAsset.transfer(bets[commitHash].bettor, totalPayout);
-    Claim(commitHash, totalPayout);
+
+    // Transfer a fee to the house when winnings are claimed. In games where the
+    // total fee cannot be equaly split we calculate and add the remainder the
+    // first time a claim is made
+    if (housePayout > 0) {
+      var remainder = houseFee - (housePayout * winnerKeys.length);
+      if ((remainder > 0) && (_claimed != true)) {
+        housePayout = housePayout + remainder;
+      }
+      betAsset.transfer(house, housePayout);
+    }
+
+    betAsset.transfer(bets[commitHash].bettor, payout);
+    Claim(commitHash, payout);
     bets[commitHash].claimed = true;
     _claimed = true;
   }
